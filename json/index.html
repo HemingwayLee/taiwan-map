@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title></title>
+    <style>
+    #map {
+      position: absolute;
+      left: 0px;
+      top: 0px;
+      z-index: 1;
+      width: 960px;
+      height: 500px;
+      border-style: solid; 
+      border-color: red;
+    }
+
+    .background {
+      fill: none;
+      pointer-events: all;
+    }
+
+    #back {
+      position: absolute;
+      left: 0px;
+      top: 0px;
+      z-index: 10;
+      background-color: red;
+      color: white;
+      font-size: 16px;
+      border-color: red;
+    }
+    </style>
+  </head>
+  <body>
+    <svg id="map"></svg>
+    <button id="back" type="button" onclick="back2ori();">Back</button>
+  </body>
+  <script src="json/join.js"></script>
+  <script src="js/d3.v4.min.js"></script>
+  <script src="js/topojson.v1.min.js"></script>
+  <script>
+  const area = {
+    AREA_COUNTY: 0,
+    AREA_TOWN: 1,
+    AREA_VILLAGE: 2
+  };
+
+  var width = 960, height = 500, centered, g;
+  var county, town, village;
+  
+  var colorMap = d3.scaleLinear().domain([0,4000000]).range(["#000","#fff"]);
+
+  var prj = d3.geoMercator().center([120.979531, 23.978567]).scale(5000);
+  var path = d3.geoPath().projection(prj);
+  
+
+  var defaultWording = "Move your mouse to the area you are interested in";
+  var tooltip = d3.select("body")
+    .append("div")
+    .style("padding", "3px")
+    .style("background-color", "red")
+    .style("color", "white")
+    .style("font-size", "16px")
+    .style("position", "absolute")
+    .style("left", "0px")
+    .style("top", "500px")
+    .style("width", "960px")
+    .style("z-index", "10")
+    .text(defaultWording);
+
+  var svg = d3.select("svg#map");
+  
+  svg.append("rect")
+    .attr("class", "background")
+    .attr("width", width)
+    .attr("height", height)
+    .on("click", back2ori);
+
+  var g = svg.append("g");
+
+  d3.queue()
+    .defer(d3.json, 'https://raw.githubusercontent.com/botchao/botchao.github.io/master/json/twCounty2010.topo.json')
+    .defer(d3.json, 'https://raw.githubusercontent.com/botchao/botchao.github.io/master/json/twTown1982.topo.json')
+    .defer(d3.json, 'https://raw.githubusercontent.com/botchao/botchao.github.io/master/json/twVillage1982.topo.json')
+    .awaitAll(initialize)
+  
+  function initialize(error, results) {
+    if (error) {
+      throw error;
+    }
+
+    county = topojson.feature(results[0], results[0].objects.layer1).features;
+    town = topojson.feature(results[1], results[1].objects.layer1).features;
+    village = topojson.feature(results[2], results[2].objects.layer1).features;
+
+    g.selectAll(".county")
+      .data(county)
+      .enter()
+      .append("path")
+      .attr('class', 'county')
+      .attr("d", path)
+      .style('stroke', 'red')
+      .style('fill', function(d) {
+        return colorMap(getAverage(filterData(d, area.AREA_COUNTY)));
+      })
+      .on("mouseover", function(d) {
+        d3.select(this).style("fill", "red");
+        
+        var res = filterData(d, area.AREA_COUNTY);
+        var popData = getPopulation(res);
+        return tooltip.text(`[${d.properties.COUNTYNAME}] 平均薪資:${Math.round(getAverage(res)/10000)} 萬元, 大學學歷(以上):${Math.round(getEducation(res)*100.0)}%, 戶數:${popData["house"]}, 人口數:${popData["pop"]}, 男:${Math.round(popData["male"]*100)}%, 女:${Math.round(popData["female"]*100)}%`);
+      })
+      .on("mouseout", function(d) { 
+        d3.select(this).style("fill", colorMap(getAverage(filterData(d, area.AREA_COUNTY))));
+
+        return tooltip.text(defaultWording); 
+      })
+      .on('click', intoCounty);
+  }
+
+  function intoCounty(d) {
+    g.selectAll('.town').remove();
+    g.selectAll('.village').remove();
+
+    var currCountyFilter = town.filter(function(i) {
+      return i.properties.COUNTYNAME == d.properties.COUNTYNAME;
+    });
+    var currTownPaths = g.selectAll('.town').data(currCountyFilter, function(i) {
+      return i.properties.COUNTYNAME;
+    });
+    
+    currTownPaths
+      .enter()
+      .append("path")
+      .attr('class', 'town')
+      .attr("d", path)
+      .style('stroke', 'orange')
+      .style('fill', function(d) {
+        return colorMap(getAverage(filterData(d, area.AREA_TOWN)));
+      })
+      .on("mouseover", function(d) { 
+        d3.select(this).style("fill", "orange");
+
+        var res = filterData(d, area.AREA_TOWN);
+        var popData = getPopulation(res);
+        return tooltip.text(`[${d.properties.TOWNNAME}] 平均薪資:${Math.round(getAverage(res)/10000)} 萬元, 大學學歷(以上):${Math.round(getEducation(res)*100.0)}%, 戶數:${popData["house"]}, 人口數:${popData["pop"]}, 男:${Math.round(popData["male"]*100)}%, 女:${Math.round(popData["female"]*100)}%`); 
+      })
+      .on("mouseout", function(d) { 
+        d3.select(this).style("fill", colorMap(getAverage(filterData(d, area.AREA_COUNTY))));
+
+        return tooltip.text(defaultWording); 
+      })
+      .on('click', intoTown);
+
+    clicked(d);
+  }
+
+  function intoTown(d) {
+    g.selectAll('.village').remove();
+
+    var currTownFilter = village.filter(function(i) {
+      return i.properties.TOWNNAME == d.properties.TOWNNAME;
+    });
+    var currVillagePaths = g.selectAll('.village').data(currTownFilter, function(i) {
+      return i.properties.TOWNNAME;
+    });
+
+    currVillagePaths
+      .enter()
+      .append("path")
+      .attr('class', 'village')
+      .attr("d", path)
+      .style('stroke', 'yellow')
+      .style('fill', function(d) {
+        return colorMap(getAverage(filterData(d, area.AREA_VILLAGE)));
+      })
+      .on("mouseover", function(d) { 
+        d3.select(this).style("fill", "yellow");
+
+        var res = filterData(d, area.AREA_VILLAGE);
+        var popData = getPopulation(res);
+        return tooltip.text(`[${d.properties.VILLAGENAM}] 平均薪資:${Math.round(getAverage(res)/10000)} 萬元, 大學學歷(以上):${Math.round(getEducation(res)*100.0)}%, 戶數:${popData["house"]}, 人口數:${popData["pop"]}, 男:${Math.round(popData["male"]*100)}%, 女:${Math.round(popData["female"]*100)}%`); 
+      })
+      .on("mouseout", function(d) { 
+        d3.select(this).style("fill", colorMap(getAverage(filterData(d, area.AREA_COUNTY))));
+
+        return tooltip.text(defaultWording); 
+      });
+
+      clicked(d);
+  }
+
+  function back2ori(d) {
+    g.selectAll('.town').remove();
+    g.selectAll('.village').remove();
+
+    clicked(d);
+  }
+
+  function filterData(d, idx) {
+    if (idx == area.AREA_COUNTY) {
+      return taxData["data"].filter(ele => ele[idx] == d.properties.COUNTYNAME);
+    } else if (idx == area.AREA_TOWN) {
+      return taxData["data"].filter(ele => ele[0] + ele[idx].slice(0, -1) == d.properties.COUNTYNAME + d.properties.TOWNNAME.slice(0, -1));
+    } else {
+      return taxData["data"].filter(ele => ele[0] + ele[1].slice(0, -1) + ele[idx].slice(0, -1) == d.properties.COUNTYNAME + d.properties.TOWNNAME.slice(0, -1) + d.properties.VILLAGENAM.slice(0, -1));
+    }
+  }
+
+  function getAverage(res) {    
+    var totalAmount = res.reduce((a, c) => a + parseFloat(c[3]), 0);
+    var totalMoney = res.reduce((a, c) => a + parseFloat(c[3]) * parseFloat(c[4]), 0);
+    // console.log(`${totalAmount} ${totalMoney}`);
+    // console.log(i.properties.COUNTYNAME);
+
+    return totalMoney/totalAmount;
+  }
+
+  function getEducation(res) {
+    var totalPopulation = res.reduce((a, c) => a + ((c[5] == "NA") ? 0.0 : parseFloat(c[5])), 0);
+    var totalBsDegree = res.reduce((a, c) => a + ((c[6] == "NA") ? 0.0 : parseFloat(c[6])), 0);
+    
+    return totalBsDegree/totalPopulation;
+  }
+
+  function getPopulation(res) {
+    var totalHouse = res.reduce((a, c) => a + ((c[7] == "NA") ? 0.0 : parseFloat(c[7])), 0);
+    var totalPopulation = res.reduce((a, c) => a + ((c[8] == "NA") ? 0.0 : parseFloat(c[8])), 0);
+    var totalMale = res.reduce((a, c) => a + ((c[9] == "NA") ? 0.0 : parseFloat(c[9])), 0);
+    var totalFemale = res.reduce((a, c) => a + ((c[10] == "NA") ? 0.0 : parseFloat(c[10])), 0);
+    
+    return {
+      "house": totalHouse, 
+      "pop": totalPopulation, 
+      "male": totalMale/totalPopulation, 
+      "female": totalFemale/totalPopulation
+    };
+  }
+
+  function clicked(d) {
+    var x, y, scale;
+
+    if (d && centered !== d) {
+      var centroid = path.centroid(d);
+      x = centroid[0];
+      y = centroid[1];
+      scale = (d.properties.hasOwnProperty("TOWNNAME"))? 64 : 16;
+      centered = d;
+    } else {
+      x = width / 2;
+      y = height / 2;
+      scale = 1;
+      centered = null;
+    }
+
+    g.selectAll("path")
+      .classed("active", centered && function(d) { return d === centered; });
+
+    g.transition()
+      .duration(750)
+      .attr("transform", "translate(" + width / 2 + "," + height / 2 + ")scale(" + scale + ")translate(" + -x + "," + -y + ")")
+      .style("stroke-width", 1.5 / scale + "px");
+  }
+  </script>
+</html>
